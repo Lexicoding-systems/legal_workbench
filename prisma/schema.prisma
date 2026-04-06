@@ -1,0 +1,81 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum DocumentStatus {
+  PENDING
+  PROCESSING
+  READY
+  ERROR
+}
+
+enum ArtifactType {
+  CHRONOLOGY
+  FACT_TABLE
+  COMPLAINT_SKELETON
+}
+
+model Matter {
+  id          String              @id @default(uuid())
+  name        String
+  description String?
+  createdAt   DateTime            @default(now())
+  documents   Document[]
+  artifacts   GeneratedArtifact[]
+}
+
+model Document {
+  id        String         @id @default(uuid())
+  matterId  String
+  matter    Matter         @relation(fields: [matterId], references: [id], onDelete: Cascade)
+  filename  String
+  mimeType  String
+  filePath  String
+  status    DocumentStatus @default(PENDING)
+  createdAt DateTime       @default(now())
+  pages     DocumentPage[]
+  chunks    Chunk[]
+}
+
+model DocumentPage {
+  id            String   @id @default(uuid())
+  documentId    String
+  document      Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  pageNumber    Int
+  extractedText String
+}
+
+model Chunk {
+  id            String     @id @default(uuid())
+  documentId    String
+  document      Document   @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  pageNumber    Int
+  text          String
+  chunkIndex    Int
+  citationLabel String
+  citations     Citation[]
+}
+
+model GeneratedArtifact {
+  id        String       @id @default(uuid())
+  matterId  String
+  matter    Matter       @relation(fields: [matterId], references: [id], onDelete: Cascade)
+  type      ArtifactType
+  content   Json
+  createdAt DateTime     @default(now())
+  citations Citation[]
+}
+
+model Citation {
+  id         String            @id @default(uuid())
+  artifactId String
+  artifact   GeneratedArtifact @relation(fields: [artifactId], references: [id], onDelete: Cascade)
+  chunkId    String
+  chunk      Chunk             @relation(fields: [chunkId], references: [id])
+  quotedText String?
+  note       String?
+}
