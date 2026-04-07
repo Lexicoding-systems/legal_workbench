@@ -1,4 +1,4 @@
-import { anthropic } from "@/lib/anthropic";
+import { generateText } from "@/lib/ai";
 import { prisma } from "@/lib/prisma";
 import { getAllChunksForMatter, RetrievedChunk } from "@/modules/retrieval/retrieval.service";
 import { saveCitations } from "@/modules/citations/citations.service";
@@ -47,45 +47,42 @@ export async function generateComplaint(matterId: string): Promise<{
     const facts = latestFactArtifact.content as unknown as FactItem[];
     const obs = facts.filter((f) => f.classification === "observation");
     const alleg = facts.filter((f) => f.classification === "allegation");
-    factsSummary = `\n## Established Facts (from prior analysis)\n${obs
-      .map((f) => `- [observation] ${f.statement}`)
-      .join("\n")}\n\n${alleg
-      .map((f) => `- [allegation] ${f.statement}`)
-      .join("\n")}\n`;
+    factsSummary =
+      `\n## Established Facts (from prior analysis)\n` +
+      obs.map((f) => `- [observation] ${f.statement}`).join("\n") +
+      "\n\n" +
+      alleg.map((f) => `- [allegation] ${f.statement}`).join("\n") +
+      "\n";
   }
 
-  const systemPrompt = `You are a legal drafting assistant. Draft a complaint skeleton grounded strictly in the provided source material.
-Use placeholder names in brackets (e.g. [PLAINTIFF], [DEFENDANT]) where proper nouns are not clear from the sources.
-Do not fabricate legal theories not supported by the facts.
-Clearly mark allegations as "Upon information and belief" where they are not directly evidenced.
-Return ONLY valid JSON — no markdown, no code fences, no explanation.`;
-
-  const userPrompt = `## Source Material
-${sourceBlock}
-${factsSummary}
-## Task
-Draft a complaint skeleton. Include standard sections: parties, jurisdiction, factual background, causes of action, and prayer for relief.
-For each section, record the source block numbers (as integers) that support it.
-
-## Required JSON Schema
-Return a JSON array of objects with these exact fields:
-- "heading": string (section title, e.g. "I. PARTIES")
-- "paragraphs": array of strings (draft paragraph text for that section)
-- "sourceChunkIds": array of source block numbers as integers that support this section
-
-Example: [{"heading":"I. PARTIES","paragraphs":["1. Plaintiff [PLAINTIFF] is an individual residing in..."],"sourceChunkIds":[1,2]}]`;
-
-  const response = await anthropic.messages.create({
-    model: "claude-sonnet-4-6",
-    max_tokens: 8192,
-    system: systemPrompt,
-    messages: [{ role: "user", content: userPrompt }],
-  });
-
-  const rawText = response.content
-    .filter((b) => b.type === "text")
-    .map((b) => (b as any).text)
-    .join("");
+  const { text: rawText } = await generateText(
+    [
+      {
+        role: "system",
+        content:
+          "You are a legal drafting assistant. Draft a complaint skeleton grounded strictly in the provided source material. " +
+          "Use placeholder names in brackets (e.g. [PLAINTIFF], [DEFENDANT]) where proper nouns are not clear from the sources. " +
+          "Do not fabricate legal theories not supported by the facts. " +
+          'Clearly mark allegations as "Upon information and belief" where they are not directly evidenced. ' +
+          "Return ONLY valid JSON — no markdown, no code fences, no explanation.",
+      },
+      {
+        role: "user",
+        content:
+          `## Source Material\n${sourceBlock}\n${factsSummary}\n` +
+          `## Task\n` +
+          `Draft a complaint skeleton. Include standard sections: parties, jurisdiction, factual background, causes of action, and prayer for relief.\n` +
+          `For each section, record the source block numbers (as integers) that support it.\n\n` +
+          `## Required JSON Schema\n` +
+          `Return a JSON array of objects with these exact fields:\n` +
+          `- "heading": string (section title, e.g. "I. PARTIES")\n` +
+          `- "paragraphs": array of strings (draft paragraph text for that section)\n` +
+          `- "sourceChunkIds": array of source block numbers as integers that support this section\n\n` +
+          `Example: [{"heading":"I. PARTIES","paragraphs":["1. Plaintiff [PLAINTIFF] is an individual residing in..."],"sourceChunkIds":[1,2]}]`,
+      },
+    ],
+    8192
+  );
 
   let sections: Array<{
     heading: string;

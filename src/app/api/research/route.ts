@@ -1,10 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
+import { queryTavily } from "@/lib/tavily";
 import { queryPerplexity } from "@/lib/perplexity";
 
 const ResearchSchema = z.object({
   query: z.string().min(1).max(1000),
-  // Optional: matter context injected into the system prompt
   matterContext: z.string().max(500).optional(),
 });
 
@@ -29,22 +29,36 @@ export async function POST(req: NextRequest) {
     }
 
     const { query, matterContext } = parsed.data;
+    const fullQuery = matterContext ? `${query} (context: ${matterContext})` : query;
 
-    const systemPrompt = matterContext
-      ? `${LEGAL_SYSTEM_PROMPT}\n\nMatter context: ${matterContext}`
-      : LEGAL_SYSTEM_PROMPT;
+    // Priority: TAVILY_API_KEY → PERPLEXITY_API_KEY
+    if (process.env.TAVILY_API_KEY) {
+      const result = await queryTavily(fullQuery);
+      return NextResponse.json(result);
+    }
 
-    const result = await queryPerplexity([
-      { role: "system", content: systemPrompt },
-      { role: "user", content: query },
-    ]);
+    if (process.env.PERPLEXITY_API_KEY) {
+      const systemPrompt = matterContext
+        ? `${LEGAL_SYSTEM_PROMPT}\n\nMatter context: ${matterContext}`
+        : LEGAL_SYSTEM_PROMPT;
+      const result = await queryPerplexity([
+        { role: "system", content: systemPrompt },
+        { role: "user", content: query },
+      ]);
+      return NextResponse.json(result);
+    }
 
-    return NextResponse.json(result);
+    return NextResponse.json(
+      {
+        error:
+          "No search provider configured. Set TAVILY_API_KEY (free at tavily.com) " +
+          "or PERPLEXITY_API_KEY in .env.",
+      },
+      { status: 503 }
+    );
   } catch (err) {
     console.error("[POST /api/research]", err);
     const message = err instanceof Error ? err.message : "Research query failed";
-    // Surface API key errors explicitly so user knows what to fix
-    const status = message.includes("PERPLEXITY_API_KEY") ? 503 : 500;
-    return NextResponse.json({ error: message }, { status });
+    return NextResponse.json({ error: message }, { status: 500 });
   }
 }

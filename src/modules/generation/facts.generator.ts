@@ -1,4 +1,4 @@
-import { anthropic } from "@/lib/anthropic";
+import { generateText } from "@/lib/ai";
 import { prisma } from "@/lib/prisma";
 import { getAllChunksForMatter, RetrievedChunk } from "@/modules/retrieval/retrieval.service";
 import { saveCitations } from "@/modules/citations/citations.service";
@@ -37,39 +37,35 @@ export async function generateFacts(matterId: string): Promise<{
   const sourceBlock = buildSourceBlock(chunks);
   const indexToId = buildChunkIdMap(chunks);
 
-  const systemPrompt = `You are a legal analyst. Extract only information directly supported by the provided source material.
-Classify each fact as:
-- "observation": directly stated in the source material
-- "inference": reasonably implied by the source material but not explicitly stated
-- "allegation": claimed by one party but not independently verified
-Return ONLY valid JSON — no markdown, no code fences, no explanation.`;
-
-  const userPrompt = `## Source Material
-${sourceBlock}
-
-## Task
-Extract a list of material facts from the source material above.
-For each fact, classify it and record the source block numbers that support it.
-
-## Required JSON Schema
-Return a JSON array of objects with these exact fields:
-- "statement": string (the fact stated clearly and concisely)
-- "classification": "observation" | "inference" | "allegation"
-- "sourceChunkIds": array of source block numbers as integers
-
-Example: [{"statement":"Defendant terminated plaintiff's employment on March 1, 2023.","classification":"observation","sourceChunkIds":[1,2]}]`;
-
-  const response = await anthropic.messages.create({
-    model: "claude-sonnet-4-6",
-    max_tokens: 4096,
-    system: systemPrompt,
-    messages: [{ role: "user", content: userPrompt }],
-  });
-
-  const rawText = response.content
-    .filter((b) => b.type === "text")
-    .map((b) => (b as any).text)
-    .join("");
+  const { text: rawText } = await generateText(
+    [
+      {
+        role: "system",
+        content:
+          "You are a legal analyst. Extract only information directly supported by the provided source material.\n" +
+          "Classify each fact as:\n" +
+          '- "observation": directly stated in the source material\n' +
+          '- "inference": reasonably implied but not explicitly stated\n' +
+          '- "allegation": claimed by one party but not independently verified\n' +
+          "Return ONLY valid JSON — no markdown, no code fences, no explanation.",
+      },
+      {
+        role: "user",
+        content:
+          `## Source Material\n${sourceBlock}\n\n` +
+          `## Task\n` +
+          `Extract a list of material facts from the source material above.\n` +
+          `For each fact, classify it and record the source block numbers that support it.\n\n` +
+          `## Required JSON Schema\n` +
+          `Return a JSON array of objects with these exact fields:\n` +
+          `- "statement": string (the fact stated clearly and concisely)\n` +
+          `- "classification": "observation" | "inference" | "allegation"\n` +
+          `- "sourceChunkIds": array of source block numbers as integers\n\n` +
+          `Example: [{"statement":"Defendant terminated plaintiff's employment on March 1, 2023.","classification":"observation","sourceChunkIds":[1,2]}]`,
+      },
+    ],
+    4096
+  );
 
   let items: Array<{
     statement: string;

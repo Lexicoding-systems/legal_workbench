@@ -1,4 +1,4 @@
-import { anthropic } from "@/lib/anthropic";
+import { generateText } from "@/lib/ai";
 import { prisma } from "@/lib/prisma";
 import { getAllChunksForMatter, RetrievedChunk } from "@/modules/retrieval/retrieval.service";
 import { saveCitations } from "@/modules/citations/citations.service";
@@ -35,36 +35,31 @@ export async function generateChronology(matterId: string): Promise<{
   const sourceBlock = buildSourceBlock(chunks);
   const indexToId = buildChunkIdMap(chunks);
 
-  const systemPrompt = `You are a legal analyst. Extract only information directly supported by the provided source material.
-Return ONLY valid JSON — no markdown, no code fences, no explanation.`;
-
-  const userPrompt = `## Source Material
-${sourceBlock}
-
-## Task
-Extract a chronological list of events from the source material above.
-Only include events that have a discernible date or time reference.
-For each event, record the source block numbers (e.g. [1], [3]) that support it.
-
-## Required JSON Schema
-Return a JSON array of objects with these exact fields:
-- "date": string (the date or time period, e.g. "January 15, 2023" or "Early 2022")
-- "event": string (concise description of what happened)
-- "sourceChunkIds": array of source block numbers as integers (e.g. [1, 3])
-
-Example: [{"date":"March 2022","event":"Plaintiff signed the employment agreement.","sourceChunkIds":[2]}]`;
-
-  const response = await anthropic.messages.create({
-    model: "claude-sonnet-4-6",
-    max_tokens: 4096,
-    system: systemPrompt,
-    messages: [{ role: "user", content: userPrompt }],
-  });
-
-  const rawText = response.content
-    .filter((b) => b.type === "text")
-    .map((b) => (b as any).text)
-    .join("");
+  const { text: rawText } = await generateText(
+    [
+      {
+        role: "system",
+        content:
+          "You are a legal analyst. Extract only information directly supported by the provided source material. " +
+          "Return ONLY valid JSON — no markdown, no code fences, no explanation.",
+      },
+      {
+        role: "user",
+        content: `## Source Material\n${sourceBlock}\n\n` +
+          `## Task\n` +
+          `Extract a chronological list of events from the source material above.\n` +
+          `Only include events that have a discernible date or time reference.\n` +
+          `For each event, record the source block numbers (e.g. [1], [3]) that support it.\n\n` +
+          `## Required JSON Schema\n` +
+          `Return a JSON array of objects with these exact fields:\n` +
+          `- "date": string (e.g. "January 15, 2023" or "Early 2022")\n` +
+          `- "event": string (concise description of what happened)\n` +
+          `- "sourceChunkIds": array of source block numbers as integers (e.g. [1, 3])\n\n` +
+          `Example: [{"date":"March 2022","event":"Plaintiff signed the employment agreement.","sourceChunkIds":[2]}]`,
+      },
+    ],
+    4096
+  );
 
   let items: Array<{ date: string; event: string; sourceChunkIds: number[] }>;
   try {
@@ -74,7 +69,6 @@ Example: [{"date":"March 2022","event":"Plaintiff signed the employment agreemen
     throw new Error("Could not parse model response as JSON. Check server logs.");
   }
 
-  // Resolve source block numbers → real chunk UUIDs
   const resolvedItems: ChronologyItem[] = items.map((item) => ({
     date: item.date,
     event: item.event,
@@ -83,7 +77,6 @@ Example: [{"date":"March 2022","event":"Plaintiff signed the employment agreemen
       .filter((id): id is string => !!id),
   }));
 
-  // Save artifact
   const artifact = await prisma.generatedArtifact.create({
     data: {
       matterId,
@@ -92,7 +85,6 @@ Example: [{"date":"March 2022","event":"Plaintiff signed the employment agreemen
     },
   });
 
-  // Save citations
   const allChunkIds = Array.from(
     new Set(resolvedItems.flatMap((item) => item.sourceChunkIds))
   );
