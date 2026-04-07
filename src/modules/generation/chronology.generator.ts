@@ -2,6 +2,7 @@ import { anthropic } from "@/lib/anthropic";
 import { prisma } from "@/lib/prisma";
 import { getAllChunksForMatter, RetrievedChunk } from "@/modules/retrieval/retrieval.service";
 import { saveCitations } from "@/modules/citations/citations.service";
+import { extractJson } from "@/lib/parse-json";
 import { ArtifactType } from "@prisma/client";
 
 export interface ChronologyItem {
@@ -67,10 +68,10 @@ Example: [{"date":"March 2022","event":"Plaintiff signed the employment agreemen
 
   let items: Array<{ date: string; event: string; sourceChunkIds: number[] }>;
   try {
-    items = JSON.parse(rawText);
-  } catch {
-    console.error("[generateChronology] Failed to parse JSON:", rawText);
-    throw new Error("Model returned invalid JSON. Raw response logged.");
+    items = extractJson(rawText) as typeof items;
+  } catch (err) {
+    console.error("[generateChronology] JSON extraction failed:", err);
+    throw new Error("Could not parse model response as JSON. Check server logs.");
   }
 
   // Resolve source block numbers → real chunk UUIDs

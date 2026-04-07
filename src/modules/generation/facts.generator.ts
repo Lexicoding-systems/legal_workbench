@@ -2,6 +2,7 @@ import { anthropic } from "@/lib/anthropic";
 import { prisma } from "@/lib/prisma";
 import { getAllChunksForMatter, RetrievedChunk } from "@/modules/retrieval/retrieval.service";
 import { saveCitations } from "@/modules/citations/citations.service";
+import { extractJson } from "@/lib/parse-json";
 import { ArtifactType } from "@prisma/client";
 
 export type FactClassification = "observation" | "inference" | "allegation";
@@ -76,10 +77,10 @@ Example: [{"statement":"Defendant terminated plaintiff's employment on March 1, 
     sourceChunkIds: number[];
   }>;
   try {
-    items = JSON.parse(rawText);
-  } catch {
-    console.error("[generateFacts] Failed to parse JSON:", rawText);
-    throw new Error("Model returned invalid JSON. Raw response logged.");
+    items = extractJson(rawText) as typeof items;
+  } catch (err) {
+    console.error("[generateFacts] JSON extraction failed:", err);
+    throw new Error("Could not parse model response as JSON. Check server logs.");
   }
 
   const validClassifications = new Set<string>([

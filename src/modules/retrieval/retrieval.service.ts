@@ -42,7 +42,7 @@ export async function retrieveChunks(
   const words = query
     .split(/\s+/)
     .map((w) => w.trim())
-    .filter((w) => w.length > 2);
+    .filter((w) => w.length > 1);
 
   if (words.length === 0) return [];
 

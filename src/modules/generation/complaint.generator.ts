@@ -2,6 +2,7 @@ import { anthropic } from "@/lib/anthropic";
 import { prisma } from "@/lib/prisma";
 import { getAllChunksForMatter, RetrievedChunk } from "@/modules/retrieval/retrieval.service";
 import { saveCitations } from "@/modules/citations/citations.service";
+import { extractJson } from "@/lib/parse-json";
 import { ArtifactType } from "@prisma/client";
 import { FactItem } from "./facts.generator";
 
@@ -92,10 +93,10 @@ Example: [{"heading":"I. PARTIES","paragraphs":["1. Plaintiff [PLAINTIFF] is an 
     sourceChunkIds: number[];
   }>;
   try {
-    sections = JSON.parse(rawText);
-  } catch {
-    console.error("[generateComplaint] Failed to parse JSON:", rawText);
-    throw new Error("Model returned invalid JSON. Raw response logged.");
+    sections = extractJson(rawText) as typeof sections;
+  } catch (err) {
+    console.error("[generateComplaint] JSON extraction failed:", err);
+    throw new Error("Could not parse model response as JSON. Check server logs.");
   }
 
   const resolvedSections: ComplaintSection[] = sections.map((s) => ({

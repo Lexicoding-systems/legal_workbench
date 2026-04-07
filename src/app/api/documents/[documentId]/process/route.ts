@@ -17,11 +17,12 @@ export async function POST(
   if (!document) {
     return NextResponse.json({ error: "Document not found" }, { status: 404 });
   }
-  if (document.status === DocumentStatus.PROCESSING) {
-    return NextResponse.json({ error: "Document is already being processed" }, { status: 409 });
-  }
 
+  // Allow retry on any status: PENDING, ERROR, or PROCESSING (treat stuck PROCESSING as recoverable).
+  // Always wipe existing pages and chunks before re-processing to prevent duplicates.
   await updateDocumentStatus(documentId, DocumentStatus.PROCESSING);
+  await prisma.documentPage.deleteMany({ where: { documentId } });
+  await prisma.chunk.deleteMany({ where: { documentId } });
 
   try {
     // Extract text pages from file
@@ -33,7 +34,9 @@ export async function POST(
     }
 
     if (pages.length === 0) {
-      throw new Error("No text could be extracted from the document.");
+      throw new Error(
+        "No text could be extracted. The file may be a scanned image — text-based PDFs only."
+      );
     }
 
     // Store DocumentPage records

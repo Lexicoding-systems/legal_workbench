@@ -133,12 +133,14 @@ export default function MatterDetailPage() {
         throw new Error(processData.error ?? "Processing failed");
 
       if (fileInputRef.current) fileInputRef.current.value = "";
-      await fetchMatter();
     } catch (err: any) {
       setUploadError(err.message);
     } finally {
       setUploading(false);
       setProcessingId(null);
+      // Always refresh the document list — even on error, so failed/stuck
+      // documents are visible and the user knows what happened.
+      await fetchMatter();
     }
   }
 

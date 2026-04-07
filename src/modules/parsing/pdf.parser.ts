@@ -11,34 +11,46 @@ export interface ParsedPage {
 /**
  * Extracts text from a PDF file on a per-page basis.
  * Uses pdf-parse's pagerender hook to capture text page-by-page.
- * Falls back to splitting the full text by estimated word count if
- * page-level extraction yields no results.
+ * Falls back to full-text (page 1) if per-page extraction yields nothing.
+ * Individual page errors are caught and skipped rather than aborting the parse.
  */
 export async function extractPdfPages(filePath: string): Promise<ParsedPage[]> {
   const buffer = await fs.readFile(filePath);
   const pages: ParsedPage[] = [];
 
-  // Use pagerender callback to capture per-page text
+  // Per-page extraction via pagerender callback
   await pdfParse(buffer, {
     pagerender: (pageData: any) => {
-      return pageData.getTextContent().then((content: any) => {
-        const text = content.items
-          .map((item: any) => item.str)
-          .join(" ")
-          .trim();
-        if (text.length > 0) {
-          pages.push({ pageNumber: pageData.pageIndex + 1, text });
-        }
-        return text;
-      });
+      return pageData
+        .getTextContent()
+        .then((content: any) => {
+          try {
+            const text = content.items
+              .map((item: any) => (typeof item.str === "string" ? item.str : ""))
+              .join(" ")
+              .trim();
+            if (text.length > 0) {
+              pages.push({ pageNumber: pageData.pageIndex + 1, text });
+            }
+            return text;
+          } catch {
+            // Malformed page content — skip this page, don't abort entire parse
+            return "";
+          }
+        })
+        .catch(() => {
+          // getTextContent() itself rejected — skip page silently
+          return "";
+        });
     },
   });
 
-  // Fallback: if pagerender captured nothing, use full-text and treat as page 1
+  // Fallback: if per-page callback captured nothing, use the full-text concatenation
   if (pages.length === 0) {
     const data = await pdfParse(buffer);
-    if (data.text.trim().length > 0) {
-      pages.push({ pageNumber: 1, text: data.text.trim() });
+    const fullText = data.text?.trim() ?? "";
+    if (fullText.length > 0) {
+      pages.push({ pageNumber: 1, text: fullText });
     }
   }
 
