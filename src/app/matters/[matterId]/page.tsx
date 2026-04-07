@@ -82,6 +82,15 @@ export default function MatterDetailPage() {
   const [searching, setSearching] = useState(false);
   const [chunks, setChunks] = useState<Chunk[] | null>(null);
 
+  // Legal Research (Perplexity)
+  const [researchQuery, setResearchQuery] = useState("");
+  const [researching, setResearching] = useState(false);
+  const [researchResult, setResearchResult] = useState<{
+    answer: string;
+    citations: string[];
+  } | null>(null);
+  const [researchError, setResearchError] = useState<string | null>(null);
+
   // Generation
   const [activeTab, setActiveTab] = useState<ArtifactTab>("chronology");
   const [generating, setGenerating] = useState(false);
@@ -164,6 +173,33 @@ export default function MatterDetailPage() {
       setChunks([]);
     } finally {
       setSearching(false);
+    }
+  }
+
+  /* ── Legal Research ─────────────────────────────────────────────────── */
+
+  async function handleResearch(e: React.FormEvent) {
+    e.preventDefault();
+    if (!researchQuery.trim()) return;
+    setResearching(true);
+    setResearchResult(null);
+    setResearchError(null);
+    try {
+      const res = await fetch("/api/research", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          query: researchQuery.trim(),
+          matterContext: matter?.name,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Research failed");
+      setResearchResult(data);
+    } catch (err: any) {
+      setResearchError(err.message);
+    } finally {
+      setResearching(false);
     }
   }
 
@@ -319,6 +355,63 @@ export default function MatterDetailPage() {
                     <p className="text-sm text-gray-700">{c.text}</p>
                   </div>
                 ))}
+              </div>
+            )}
+          </div>
+        )}
+      </section>
+
+      {/* ── Legal Research ────────────────────────────────────────────── */}
+      <section className="bg-white border border-gray-200 rounded-lg p-5">
+        <h2 className="text-base font-semibold mb-1">Legal Research</h2>
+        <p className="text-xs text-gray-400 mb-4">
+          Web-grounded search via Perplexity — case law, statutes, precedents.
+        </p>
+        <form onSubmit={handleResearch} className="flex gap-3 mb-4">
+          <input
+            type="text"
+            placeholder="e.g. wrongful termination retaliation standard of proof"
+            value={researchQuery}
+            onChange={(e) => setResearchQuery(e.target.value)}
+            className="flex-1 border border-gray-300 rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
+          />
+          <button
+            type="submit"
+            disabled={researching}
+            className="bg-green-700 text-white px-4 py-2 rounded text-sm font-medium hover:bg-green-800 disabled:opacity-50 flex-shrink-0"
+          >
+            {researching ? "Searching…" : "Research"}
+          </button>
+        </form>
+
+        {researchError && (
+          <p className="text-red-600 text-sm mb-3">{researchError}</p>
+        )}
+
+        {researchResult && (
+          <div className="space-y-4">
+            <div className="text-sm text-gray-800 whitespace-pre-wrap leading-relaxed">
+              {researchResult.answer}
+            </div>
+            {researchResult.citations.length > 0 && (
+              <div>
+                <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">
+                  Sources
+                </p>
+                <ol className="list-decimal list-inside space-y-1">
+                  {researchResult.citations.map((url, i) => (
+                    <li key={i} className="text-xs">
+                      <a
+                        href={url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-blue-600 hover:underline break-all"
+                      >
+                        {url}
+                      </a>
+                    </li>
+                  ))}
+                </ol>
               </div>
             )}
           </div>
