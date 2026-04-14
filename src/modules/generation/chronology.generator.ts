@@ -1,9 +1,16 @@
 import { generateText } from "@/lib/ai";
 import { prisma } from "@/lib/prisma";
-import { getAllChunksForMatter, RetrievedChunk } from "@/modules/retrieval/retrieval.service";
+import { getAllChunksForMatter } from "@/modules/retrieval/retrieval.service";
 import { saveCitations } from "@/modules/citations/citations.service";
 import { extractJson } from "@/lib/parse-json";
 import { ArtifactType } from "@prisma/client";
+import {
+  buildSourceBlock,
+  buildChunkIdMap,
+  resolveChunkIds,
+  collectAllChunkIds,
+} from "@/modules/generation/generator.utils";
+import { DEFAULT_CHUNK_LIMIT, DEFAULT_MAX_TOKENS } from "@/config/constants";
 
 export interface ChronologyItem {
   date: string;
@@ -11,23 +18,11 @@ export interface ChronologyItem {
   sourceChunkIds: string[];
 }
 
-function buildSourceBlock(chunks: RetrievedChunk[]): string {
-  return chunks
-    .map((c, i) => `[${i + 1}] ${c.citationLabel}:\n${c.text}`)
-    .join("\n\n");
-}
-
-function buildChunkIdMap(chunks: RetrievedChunk[]): Map<number, string> {
-  const map = new Map<number, string>();
-  chunks.forEach((c, i) => map.set(i + 1, c.id));
-  return map;
-}
-
 export async function generateChronology(matterId: string): Promise<{
   artifactId: string;
   items: ChronologyItem[];
 }> {
-  const chunks = await getAllChunksForMatter(matterId, 40);
+  const chunks = await getAllChunksForMatter(matterId, DEFAULT_CHUNK_LIMIT);
   if (chunks.length === 0) {
     throw new Error("No chunks found for this matter. Upload and process documents first.");
   }
@@ -58,7 +53,7 @@ export async function generateChronology(matterId: string): Promise<{
           `Example: [{"date":"March 2022","event":"Plaintiff signed the employment agreement.","sourceChunkIds":[2]}]`,
       },
     ],
-    4096
+    DEFAULT_MAX_TOKENS
   );
 
   let items: Array<{ date: string; event: string; sourceChunkIds: number[] }>;
@@ -72,9 +67,7 @@ export async function generateChronology(matterId: string): Promise<{
   const resolvedItems: ChronologyItem[] = items.map((item) => ({
     date: item.date,
     event: item.event,
-    sourceChunkIds: item.sourceChunkIds
-      .map((n) => indexToId.get(n))
-      .filter((id): id is string => !!id),
+    sourceChunkIds: resolveChunkIds(item.sourceChunkIds, indexToId),
   }));
 
   const artifact = await prisma.generatedArtifact.create({
@@ -85,10 +78,7 @@ export async function generateChronology(matterId: string): Promise<{
     },
   });
 
-  const allChunkIds = Array.from(
-    new Set(resolvedItems.flatMap((item) => item.sourceChunkIds))
-  );
-  await saveCitations(artifact.id, allChunkIds);
+  await saveCitations(artifact.id, collectAllChunkIds(resolvedItems));
 
   return { artifactId: artifact.id, items: resolvedItems };
 }

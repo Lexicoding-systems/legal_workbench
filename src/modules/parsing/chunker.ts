@@ -1,6 +1,5 @@
 import { ParsedPage } from "./pdf.parser";
-
-const CHUNK_SIZE = 500; // characters (~125 tokens at ~4 chars/token)
+import { CHUNK_SIZE } from "@/config/constants";
 
 export interface RawChunk {
   documentId: string;

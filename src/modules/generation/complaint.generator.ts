@@ -1,10 +1,17 @@
 import { generateText } from "@/lib/ai";
 import { prisma } from "@/lib/prisma";
-import { getAllChunksForMatter, RetrievedChunk } from "@/modules/retrieval/retrieval.service";
+import { getAllChunksForMatter } from "@/modules/retrieval/retrieval.service";
 import { saveCitations } from "@/modules/citations/citations.service";
 import { extractJson } from "@/lib/parse-json";
 import { ArtifactType } from "@prisma/client";
 import { FactItem } from "./facts.generator";
+import {
+  buildSourceBlock,
+  buildChunkIdMap,
+  resolveChunkIds,
+  collectAllChunkIds,
+} from "@/modules/generation/generator.utils";
+import { DEFAULT_CHUNK_LIMIT, COMPLAINT_MAX_TOKENS } from "@/config/constants";
 
 export interface ComplaintSection {
   heading: string;
@@ -12,23 +19,11 @@ export interface ComplaintSection {
   sourceChunkIds: string[];
 }
 
-function buildSourceBlock(chunks: RetrievedChunk[]): string {
-  return chunks
-    .map((c, i) => `[${i + 1}] ${c.citationLabel}:\n${c.text}`)
-    .join("\n\n");
-}
-
-function buildChunkIdMap(chunks: RetrievedChunk[]): Map<number, string> {
-  const map = new Map<number, string>();
-  chunks.forEach((c, i) => map.set(i + 1, c.id));
-  return map;
-}
-
 export async function generateComplaint(matterId: string): Promise<{
   artifactId: string;
   sections: ComplaintSection[];
 }> {
-  const chunks = await getAllChunksForMatter(matterId, 40);
+  const chunks = await getAllChunksForMatter(matterId, DEFAULT_CHUNK_LIMIT);
   if (chunks.length === 0) {
     throw new Error("No chunks found for this matter. Upload and process documents first.");
   }
@@ -81,7 +76,7 @@ export async function generateComplaint(matterId: string): Promise<{
           `Example: [{"heading":"I. PARTIES","paragraphs":["1. Plaintiff [PLAINTIFF] is an individual residing in..."],"sourceChunkIds":[1,2]}]`,
       },
     ],
-    8192
+    COMPLAINT_MAX_TOKENS
   );
 
   let sections: Array<{
@@ -99,9 +94,7 @@ export async function generateComplaint(matterId: string): Promise<{
   const resolvedSections: ComplaintSection[] = sections.map((s) => ({
     heading: s.heading,
     paragraphs: s.paragraphs,
-    sourceChunkIds: s.sourceChunkIds
-      .map((n) => indexToId.get(n))
-      .filter((id): id is string => !!id),
+    sourceChunkIds: resolveChunkIds(s.sourceChunkIds, indexToId),
   }));
 
   const artifact = await prisma.generatedArtifact.create({
@@ -112,10 +105,7 @@ export async function generateComplaint(matterId: string): Promise<{
     },
   });
 
-  const allChunkIds = Array.from(
-    new Set(resolvedSections.flatMap((s) => s.sourceChunkIds))
-  );
-  await saveCitations(artifact.id, allChunkIds);
+  await saveCitations(artifact.id, collectAllChunkIds(resolvedSections));
 
   return { artifactId: artifact.id, sections: resolvedSections };
 }

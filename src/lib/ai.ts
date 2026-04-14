@@ -10,6 +10,7 @@
  */
 
 import OpenAI from "openai";
+import { GROQ_MODEL, ANTHROPIC_MODEL, AI_TIMEOUT_MS } from "@/config/constants";
 
 export interface AIMessage {
   role: "system" | "user" | "assistant";
@@ -22,6 +23,20 @@ export interface AIResponse {
   model: string;
 }
 
+function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), ms);
+  return promise.finally(() => clearTimeout(timer)).then(
+    (v) => v,
+    (err) => {
+      if (controller.signal.aborted) {
+        throw new Error(`AI call timed out after ${ms}ms [${label}]`);
+      }
+      throw err;
+    }
+  );
+}
+
 // Groq uses the OpenAI SDK pointed at their base URL
 function getGroqClient(): OpenAI {
   return new OpenAI({
@@ -32,14 +47,18 @@ function getGroqClient(): OpenAI {
 
 async function callGroq(messages: AIMessage[], maxTokens: number): Promise<AIResponse> {
   const client = getGroqClient();
-  const model = "llama-3.3-70b-versatile";
-  const completion = await client.chat.completions.create({
-    model,
-    messages,
-    max_tokens: maxTokens,
-    // Groq supports response_format for JSON mode
-    response_format: { type: "json_object" },
-  });
+  const model = GROQ_MODEL;
+  const completion = await withTimeout(
+    client.chat.completions.create({
+      model,
+      messages,
+      max_tokens: maxTokens,
+      // Groq supports response_format for JSON mode
+      response_format: { type: "json_object" },
+    }),
+    AI_TIMEOUT_MS,
+    "groq"
+  );
   return {
     text: completion.choices[0]?.message?.content ?? "",
     provider: "groq",
@@ -50,7 +69,7 @@ async function callGroq(messages: AIMessage[], maxTokens: number): Promise<AIRes
 async function callAnthropic(messages: AIMessage[], maxTokens: number): Promise<AIResponse> {
   // Dynamic import so the module doesn't crash if @anthropic-ai/sdk isn't installed
   const { anthropic } = await import("@/lib/anthropic");
-  const model = "claude-sonnet-4-6";
+  const model = ANTHROPIC_MODEL;
 
   // Split system message from user/assistant messages
   const systemMsg = messages.find((m) => m.role === "system")?.content ?? "";
@@ -58,12 +77,16 @@ async function callAnthropic(messages: AIMessage[], maxTokens: number): Promise<
     .filter((m) => m.role !== "system")
     .map((m) => ({ role: m.role as "user" | "assistant", content: m.content }));
 
-  const response = await anthropic.messages.create({
-    model,
-    max_tokens: maxTokens,
-    system: systemMsg,
-    messages: chatMessages,
-  });
+  const response = await withTimeout(
+    anthropic.messages.create({
+      model,
+      max_tokens: maxTokens,
+      system: systemMsg,
+      messages: chatMessages,
+    }),
+    AI_TIMEOUT_MS,
+    "anthropic"
+  );
 
   return {
     text: response.content
