@@ -23,20 +23,6 @@ export interface AIResponse {
   model: string;
 }
 
-function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), ms);
-  return promise.finally(() => clearTimeout(timer)).then(
-    (v) => v,
-    (err) => {
-      if (controller.signal.aborted) {
-        throw new Error(`AI call timed out after ${ms}ms [${label}]`);
-      }
-      throw err;
-    }
-  );
-}
-
 // Groq uses the OpenAI SDK pointed at their base URL
 function getGroqClient(): OpenAI {
   return new OpenAI({
@@ -48,22 +34,32 @@ function getGroqClient(): OpenAI {
 async function callGroq(messages: AIMessage[], maxTokens: number): Promise<AIResponse> {
   const client = getGroqClient();
   const model = GROQ_MODEL;
-  const completion = await withTimeout(
-    client.chat.completions.create({
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), AI_TIMEOUT_MS);
+  try {
+    const completion = await client.chat.completions.create(
+      {
+        model,
+        messages,
+        max_tokens: maxTokens,
+        // Groq supports response_format for JSON mode
+        response_format: { type: "json_object" },
+      },
+      { signal: controller.signal }
+    );
+    return {
+      text: completion.choices[0]?.message?.content ?? "",
+      provider: "groq",
       model,
-      messages,
-      max_tokens: maxTokens,
-      // Groq supports response_format for JSON mode
-      response_format: { type: "json_object" },
-    }),
-    AI_TIMEOUT_MS,
-    "groq"
-  );
-  return {
-    text: completion.choices[0]?.message?.content ?? "",
-    provider: "groq",
-    model,
-  };
+    };
+  } catch (err: any) {
+    if (controller.signal.aborted) {
+      throw new Error(`AI call timed out after ${AI_TIMEOUT_MS}ms [groq]`);
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 async function callAnthropic(messages: AIMessage[], maxTokens: number): Promise<AIResponse> {
@@ -77,25 +73,34 @@ async function callAnthropic(messages: AIMessage[], maxTokens: number): Promise<
     .filter((m) => m.role !== "system")
     .map((m) => ({ role: m.role as "user" | "assistant", content: m.content }));
 
-  const response = await withTimeout(
-    anthropic.messages.create({
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), AI_TIMEOUT_MS);
+  try {
+    const response = await anthropic.messages.create(
+      {
+        model,
+        max_tokens: maxTokens,
+        system: systemMsg,
+        messages: chatMessages,
+      },
+      { signal: controller.signal }
+    );
+    return {
+      text: response.content
+        .filter((b) => b.type === "text")
+        .map((b) => (b as any).text)
+        .join(""),
+      provider: "anthropic",
       model,
-      max_tokens: maxTokens,
-      system: systemMsg,
-      messages: chatMessages,
-    }),
-    AI_TIMEOUT_MS,
-    "anthropic"
-  );
-
-  return {
-    text: response.content
-      .filter((b) => b.type === "text")
-      .map((b) => (b as any).text)
-      .join(""),
-    provider: "anthropic",
-    model,
-  };
+    };
+  } catch (err: any) {
+    if (controller.signal.aborted) {
+      throw new Error(`AI call timed out after ${AI_TIMEOUT_MS}ms [anthropic]`);
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 /**
