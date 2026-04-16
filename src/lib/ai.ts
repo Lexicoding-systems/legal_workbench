@@ -10,6 +10,7 @@
  */
 
 import OpenAI from "openai";
+import { GROQ_MODEL, ANTHROPIC_MODEL, AI_TIMEOUT_MS } from "@/config/constants";
 
 export interface AIMessage {
   role: "system" | "user" | "assistant";
@@ -32,25 +33,39 @@ function getGroqClient(): OpenAI {
 
 async function callGroq(messages: AIMessage[], maxTokens: number): Promise<AIResponse> {
   const client = getGroqClient();
-  const model = "llama-3.3-70b-versatile";
-  const completion = await client.chat.completions.create({
-    model,
-    messages,
-    max_tokens: maxTokens,
-    // Groq supports response_format for JSON mode
-    response_format: { type: "json_object" },
-  });
-  return {
-    text: completion.choices[0]?.message?.content ?? "",
-    provider: "groq",
-    model,
-  };
+  const model = GROQ_MODEL;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), AI_TIMEOUT_MS);
+  try {
+    const completion = await client.chat.completions.create(
+      {
+        model,
+        messages,
+        max_tokens: maxTokens,
+        // Groq supports response_format for JSON mode
+        response_format: { type: "json_object" },
+      },
+      { signal: controller.signal }
+    );
+    return {
+      text: completion.choices[0]?.message?.content ?? "",
+      provider: "groq",
+      model,
+    };
+  } catch (err: any) {
+    if (controller.signal.aborted) {
+      throw new Error(`AI call timed out after ${AI_TIMEOUT_MS}ms [groq]`);
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 async function callAnthropic(messages: AIMessage[], maxTokens: number): Promise<AIResponse> {
   // Dynamic import so the module doesn't crash if @anthropic-ai/sdk isn't installed
   const { anthropic } = await import("@/lib/anthropic");
-  const model = "claude-sonnet-4-6";
+  const model = ANTHROPIC_MODEL;
 
   // Split system message from user/assistant messages
   const systemMsg = messages.find((m) => m.role === "system")?.content ?? "";
@@ -58,21 +73,34 @@ async function callAnthropic(messages: AIMessage[], maxTokens: number): Promise<
     .filter((m) => m.role !== "system")
     .map((m) => ({ role: m.role as "user" | "assistant", content: m.content }));
 
-  const response = await anthropic.messages.create({
-    model,
-    max_tokens: maxTokens,
-    system: systemMsg,
-    messages: chatMessages,
-  });
-
-  return {
-    text: response.content
-      .filter((b) => b.type === "text")
-      .map((b) => (b as any).text)
-      .join(""),
-    provider: "anthropic",
-    model,
-  };
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), AI_TIMEOUT_MS);
+  try {
+    const response = await anthropic.messages.create(
+      {
+        model,
+        max_tokens: maxTokens,
+        system: systemMsg,
+        messages: chatMessages,
+      },
+      { signal: controller.signal }
+    );
+    return {
+      text: response.content
+        .filter((b) => b.type === "text")
+        .map((b) => (b as any).text)
+        .join(""),
+      provider: "anthropic",
+      model,
+    };
+  } catch (err: any) {
+    if (controller.signal.aborted) {
+      throw new Error(`AI call timed out after ${AI_TIMEOUT_MS}ms [anthropic]`);
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 /**
